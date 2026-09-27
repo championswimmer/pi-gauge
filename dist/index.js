@@ -311,6 +311,277 @@ class GaugeDialog {
     invalidate() { }
 }
 // ---------------------------------------------------------------------------
+// History (per-call samples in session JSONL + graph view)
+// ---------------------------------------------------------------------------
+/** customType for per-LLM-call gauge records (see plan 004). */
+export const SAMPLE_TYPE = "pi-gauge-sample";
+/** Short display label for a sample's model (never empty). */
+export function sampleLabel(s) {
+    if (s.model)
+        return s.model;
+    if (s.provider)
+        return s.provider;
+    return "unknown";
+}
+/** Defensively validate an unknown value as a v1 GaugeSample. */
+export function isGaugeSample(raw) {
+    if (typeof raw !== "object" || raw === null)
+        return false;
+    const s = raw;
+    return (s.v === 1 &&
+        typeof s.ts === "number" &&
+        typeof s.provider === "string" &&
+        typeof s.model === "string" &&
+        (s.ttftMs === null || typeof s.ttftMs === "number") &&
+        typeof s.tokens === "number" &&
+        typeof s.e2eMs === "number" &&
+        (s.streamMs === null || typeof s.streamMs === "number"));
+}
+/**
+ * Extract gauge samples from session entries (getBranch() output).
+ * Foreign custom entries and corrupt shapes are dropped.
+ */
+export function loadSamples(entries) {
+    const out = [];
+    for (const e of entries) {
+        if (e.type === "custom" && e.customType === SAMPLE_TYPE && isGaugeSample(e.data)) {
+            out.push(e.data);
+        }
+    }
+    return out;
+}
+/** Distinct model labels in first-seen order (for the filter cycle). */
+export function distinctModels(samples) {
+    const seen = [];
+    for (const s of samples) {
+        const l = sampleLabel(s);
+        if (!seen.includes(l))
+            seen.push(l);
+    }
+    return seen;
+}
+/**
+ * TPS for one sample under the given mode. Stream mode falls back to the
+ * e2e window when streamMs is missing; null when no positive window exists.
+ */
+export function sampleTps(s, mode) {
+    const ms = mode === "stream" && s.streamMs != null ? s.streamMs : s.e2eMs;
+    if (!(ms > 0) || !(s.tokens > 0))
+        return null;
+    return s.tokens / (ms / 1000);
+}
+const BAR_FULL = "█";
+const BAR_FRAC = ["", "▁", "▂", "▃", "▄", "▅", "▆", "▇"];
+/**
+ * Horizontal bar (≤ width cols) with fractional end block for sub-cell
+ * precision. Empty string for non-positive values — gaps stay blank, never
+ * zero-height noise.
+ */
+export function barFor(value, max, width) {
+    if (!(value > 0) || !(max > 0) || !(width > 0))
+        return "";
+    const eighths = Math.round((value / max) * width * 8);
+    const full = Math.floor(eighths / 8);
+    const rest = eighths % 8;
+    return (BAR_FULL.repeat(Math.min(width, full)) + (full < width && rest > 0 ? BAR_FRAC[rest] : ""));
+}
+function avg(nums) {
+    if (nums.length === 0)
+        return null;
+    return nums.reduce((a, b) => a + b, 0) / nums.length;
+}
+function truncateLabel(label) {
+    return label.length > 18 ? label.slice(0, 17) + "…" : label;
+}
+/**
+ * Plain-text history chart (no ANSI — the overlay component adds theme
+ * colors). Two stacked sections (TPS + TTFT, separate scales) over one
+ * shared call index; scroll via offset/maxRows.
+ */
+export function renderGraph(samples, opts) {
+    const models = distinctModels(samples);
+    const filtered = opts.filter === "all" ? samples : samples.filter((s) => sampleLabel(s) === opts.filter);
+    if (filtered.length === 0) {
+        return [
+            {
+                kind: "empty",
+                text: samples.length === 0
+                    ? "No gauge samples yet — finish a turn first."
+                    : `No samples for "${opts.filter}".`,
+            },
+        ];
+    }
+    const lines = [];
+    lines.push({
+        kind: "title",
+        text: `pi-gauge history · ${filtered.length} call${filtered.length === 1 ? "" : "s"}`,
+    });
+    const tpsVals = filtered.map((s) => sampleTps(s, opts.mode));
+    const ttftVals = filtered.map((s) => s.ttftMs);
+    const maxTps = Math.max(0, ...tpsVals.filter((v) => v !== null));
+    const maxTtft = Math.max(0, ...ttftVals.filter((v) => v !== null));
+    const offset = Math.max(0, Math.min(opts.offset, Math.max(0, filtered.length - 1)));
+    const window = filtered
+        .map((s, i) => ({ s, i }))
+        .slice(offset, offset + Math.max(1, opts.maxRows));
+    const mixed = opts.filter === "all" && models.length > 1;
+    lines.push({
+        kind: "section",
+        text: `TPS (${opts.mode})${maxTps > 0 ? ` — max ${formatTps(maxTps)} t/s` : ""}`,
+    });
+    for (const { s, i } of window) {
+        const v = sampleTps(s, opts.mode);
+        const bar = (v !== null ? barFor(v, maxTps, opts.width) : "").padEnd(opts.width);
+        const val = (v !== null ? `${formatTps(v)} t/s` : "—").padEnd(8);
+        const tag = mixed ? ` ${truncateLabel(sampleLabel(s))}` : "";
+        lines.push({ kind: "row", text: `#${String(i + 1).padStart(2)} ${bar} ${val}${tag}` });
+    }
+    lines.push({
+        kind: "section",
+        text: `TTFT${maxTtft > 0 ? ` — max ${formatDuration(maxTtft)}` : ""}`,
+    });
+    for (const { s, i } of window) {
+        const v = s.ttftMs;
+        const bar = (v !== null ? barFor(v, maxTtft, opts.width) : "").padEnd(opts.width);
+        const val = (v !== null ? formatDuration(v) : "—").padEnd(8);
+        const tag = mixed ? ` ${truncateLabel(sampleLabel(s))}` : "";
+        lines.push({ kind: "row", text: `#${String(i + 1).padStart(2)} ${bar} ${val}${tag}` });
+    }
+    // Footer averages cover the full filtered set (stable while scrolling).
+    const avgT = avg(tpsVals.filter((v) => v !== null));
+    const avgL = avg(ttftVals.filter((v) => v !== null));
+    const shown = window.length < filtered.length ? ` · showing ${offset + 1}–${offset + window.length}` : "";
+    lines.push({
+        kind: "footer",
+        text: `avg ${avgT !== null ? `${formatTps(avgT)} t/s` : "—"} · avg TTFT ${avgL !== null ? formatDuration(avgL) : "—"}${shown}`,
+    });
+    lines.push({
+        kind: "legend",
+        text: `filter < ${opts.filter} > · ↑↓ scroll · ←→ filter · esc close`,
+    });
+    return lines;
+}
+/** Multi-line per-model summary for non-TUI modes (notify fallback). */
+export function summarizeSamples(samples, mode) {
+    if (samples.length === 0)
+        return "pi-gauge: no samples recorded this session yet.";
+    const byModel = new Map();
+    for (const s of samples) {
+        const l = sampleLabel(s);
+        byModel.set(l, [...(byModel.get(l) ?? []), s]);
+    }
+    const lines = [`pi-gauge: ${samples.length} call${samples.length === 1 ? "" : "s"} (${mode})`];
+    for (const [label, xs] of byModel) {
+        const t = avg(xs.map((s) => sampleTps(s, mode)).filter((v) => v !== null));
+        const l = avg(xs.map((s) => s.ttftMs).filter((v) => v !== null));
+        lines.push(`${label}: n=${xs.length} avg ${t !== null ? `${formatTps(t)} t/s` : "—"} avg TTFT ${l !== null ? formatDuration(l) : "—"}`);
+    }
+    return lines.join("\n");
+}
+const GRAPH_WIDTH = 72;
+const GRAPH_MAX_ROWS = 8;
+/**
+ * Bordered history overlay: renderGraph() output with theme colors plus
+ * filter/scroll state. ←→ cycles all → model…, ↑↓/PgUp/PgDn scroll the
+ * window, esc closes. Read-only — no save path.
+ */
+class GaugeGraph {
+    theme;
+    samples;
+    mode;
+    done;
+    filterIdx = 0; // 0 = all, else models[filterIdx - 1]
+    offset = 0;
+    models;
+    constructor(theme, samples, mode, done, initialFilter) {
+        this.theme = theme;
+        this.samples = samples;
+        this.mode = mode;
+        this.done = done;
+        this.models = distinctModels(samples);
+        if (initialFilter) {
+            const found = this.models.findIndex((m) => m.toLowerCase() === initialFilter.toLowerCase());
+            if (found >= 0)
+                this.filterIdx = found + 1;
+        }
+    }
+    get filter() {
+        return this.filterIdx === 0 ? "all" : this.models[this.filterIdx - 1];
+    }
+    get filteredCount() {
+        return this.filter === "all"
+            ? this.samples.length
+            : this.samples.filter((s) => sampleLabel(s) === this.filter).length;
+    }
+    handleInput(data) {
+        if (matchesKey(data, "escape")) {
+            this.done(false);
+            return;
+        }
+        const cycle = this.models.length + 1;
+        if (matchesKey(data, "left")) {
+            this.filterIdx = (this.filterIdx + cycle - 1) % cycle;
+            this.offset = 0;
+        }
+        else if (matchesKey(data, "right")) {
+            this.filterIdx = (this.filterIdx + 1) % cycle;
+            this.offset = 0;
+        }
+        else if (matchesKey(data, "up")) {
+            this.offset = Math.max(0, this.offset - 1);
+        }
+        else if (matchesKey(data, "down")) {
+            this.offset = Math.min(Math.max(0, this.filteredCount - 1), this.offset + 1);
+        }
+        else if (matchesKey(data, "pageUp")) {
+            this.offset = Math.max(0, this.offset - GRAPH_MAX_ROWS);
+        }
+        else if (matchesKey(data, "pageDown")) {
+            this.offset = Math.min(Math.max(0, this.filteredCount - 1), this.offset + GRAPH_MAX_ROWS);
+        }
+    }
+    render(_width) {
+        const th = this.theme;
+        const innerW = GRAPH_WIDTH - 2;
+        const border = (s) => th.fg("border", s);
+        const pad = (s) => s + " ".repeat(Math.max(0, innerW - visibleWidth(s)));
+        const row = (content) => border("│") + pad(content) + border("│");
+        // Row layout: `#12 ` (4) + bar + ` ` + value (8) + ` ` + tag (≤19)
+        // + 2 chars margin → barW = innerW − 35.
+        const barW = Math.max(10, innerW - 35);
+        const graph = renderGraph(this.samples, {
+            mode: this.mode,
+            filter: this.filter,
+            width: barW,
+            offset: this.offset,
+            maxRows: GRAPH_MAX_ROWS,
+        });
+        const paint = (l) => {
+            switch (l.kind) {
+                case "title":
+                    return ` ${th.bold(l.text)}`;
+                case "section":
+                    return ` ${th.fg("accent", l.text)}`;
+                case "row":
+                    return ` ${th.fg("text", l.text)}`;
+                case "footer":
+                    return ` ${th.fg("text", l.text)}`;
+                case "legend":
+                    return ` ${th.fg("dim", l.text)}`;
+                case "empty":
+                    return ` ${th.fg("dim", l.text)}`;
+            }
+        };
+        const lines = [];
+        lines.push(border(`╭${"─".repeat(innerW)}╮`));
+        for (const l of graph)
+            lines.push(row(paint(l)));
+        lines.push(border(`╰${"─".repeat(innerW)}╯`));
+        return lines;
+    }
+    invalidate() { }
+}
+// ---------------------------------------------------------------------------
 // Extension
 // ---------------------------------------------------------------------------
 export default function (pi) {
@@ -376,6 +647,27 @@ export default function (pi) {
         // Snap to exact final usage when available; otherwise keep the estimate.
         if (message.usage && message.usage.output > 0)
             lastTokens = message.usage.output;
+        // Persist one sample per call for /gauge graph (best-effort — never
+        // break the session if the JSONL write fails). appendEntry lives on
+        // the factory-level ExtensionAPI, not the event ctx, hence pi.* here.
+        try {
+            if (lastTokens > 0 || lastTtftMs !== null) {
+                const e2eMs = requestStart > 0 ? now - requestStart : 0;
+                pi.appendEntry(SAMPLE_TYPE, {
+                    v: 1,
+                    ts: Date.now(),
+                    provider: String(message.provider ?? ctx.model?.provider ?? "unknown"),
+                    model: String(message.model ?? ctx.model?.id ?? "unknown"),
+                    ttftMs: lastTtftMs,
+                    tokens: lastTokens,
+                    e2eMs: Math.max(0, Math.round(e2eMs)),
+                    streamMs: firstDeltaTime !== null ? Math.max(0, Math.round(now - firstDeltaTime)) : null,
+                });
+            }
+        }
+        catch {
+            // History is auxiliary; ignore persistence failures.
+        }
         // Guard: empty/error streams never produce a first delta — renderText
         // then shows TTFT as "—" and skips TPS. The final render bypasses the
         // mid-stream window floor: exact tokens over the full window is the
@@ -390,7 +682,7 @@ export default function (pi) {
     pi.on("agent_end", settle);
     pi.on("session_shutdown", settle);
     pi.registerCommand("gauge", {
-        description: "Configure pi-gauge display: /gauge [tps|ttft on|off] [mode e2e|stream] [display pill|icon] [icons emoji|nerd]",
+        description: "Configure pi-gauge display: /gauge [tps|ttft on|off] [mode e2e|stream] [display pill|icon] [icons emoji|nerd] [graph [model]]",
         handler: async (args, ctx) => {
             const [rawSub, rawValue] = args.trim().toLowerCase().split(/\s+/);
             if (!rawSub) {
@@ -420,6 +712,26 @@ export default function (pi) {
                     ctx.ui.setStatus(STATUS_KEY, undefined);
                 return;
             }
+            // History graph: /gauge graph [model].
+            if (rawSub === "graph") {
+                let entries = [];
+                try {
+                    entries = ctx.sessionManager.getBranch();
+                }
+                catch {
+                    entries = [];
+                }
+                const samples = loadSamples(entries);
+                if (ctx.mode !== "tui") {
+                    ctx.ui.notify(summarizeSamples(samples, settings.measurementMode), "info");
+                    return;
+                }
+                await ctx.ui.custom((_tui, theme, _kb, done) => new GaugeGraph(theme, samples, settings.measurementMode, done, rawValue), {
+                    overlay: true,
+                    overlayOptions: { anchor: "center", width: GRAPH_WIDTH + 4, maxHeight: "90%" },
+                });
+                return;
+            }
             // Legacy aliases.
             const sub = rawSub === "throughput" ? "tps" : rawSub === "latency" ? "ttft" : rawSub;
             let changed = false;
@@ -444,7 +756,7 @@ export default function (pi) {
                 changed = true;
             }
             if (!changed) {
-                ctx.ui.notify("Usage: /gauge [tps|ttft on|off] [mode e2e|stream] [display pill|icon] [icons emoji|nerd]", "warning");
+                ctx.ui.notify("Usage: /gauge [tps|ttft on|off] [mode e2e|stream] [display pill|icon] [icons emoji|nerd] [graph [model]]", "warning");
                 return;
             }
             saveSettings(settings);

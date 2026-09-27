@@ -14,6 +14,15 @@ import {
   rowValue,
   cycleRowValue,
   DEFAULTS,
+  SAMPLE_TYPE,
+  isGaugeSample,
+  loadSamples,
+  distinctModels,
+  sampleLabel,
+  sampleTps,
+  barFor,
+  renderGraph,
+  summarizeSamples,
 } from "../dist/index.js";
 
 function textMsg(text, usage) {
@@ -402,4 +411,138 @@ test("cycleRowValue toggles forward and back", () => {
   assert.equal(s.showThroughput, false);
   cycleRowValue(s, "throughput", -1);
   assert.equal(s.showThroughput, true);
+});
+
+// ---------------------------------------------------------------------------
+// History: samples, loading, bars, graph (plan 004)
+// ---------------------------------------------------------------------------
+
+function sample(over = {}) {
+  return {
+    v: 1, ts: 1000, provider: "anthropic", model: "claude-x",
+    ttftMs: 400, tokens: 100, e2eMs: 2000, streamMs: 1600, ...over,
+  };
+}
+
+function customEntry(data, customType = SAMPLE_TYPE) {
+  return { type: "custom", id: "e1", parentId: "p", timestamp: "t", customType, data };
+}
+
+test("isGaugeSample accepts v1 shape, rejects junk", () => {
+  assert.ok(isGaugeSample(sample()));
+  assert.ok(!isGaugeSample(null));
+  assert.ok(!isGaugeSample({ v: 2, ts: 1, provider: "a", model: "b", ttftMs: 1, tokens: 1, e2eMs: 1, streamMs: 1 }));
+  assert.ok(!isGaugeSample(sample({ tokens: "100" })));
+  assert.ok(isGaugeSample(sample({ ttftMs: null, streamMs: null })));
+});
+
+test("loadSamples keeps only pi-gauge-sample customs, drops corrupt", () => {
+  const entries = [
+    customEntry(sample({ model: "a" })),
+    customEntry({ hello: 1 }, "other-ext"),
+    customEntry({ v: 1, nope: true }),
+    { type: "message", id: "m", parentId: "p", timestamp: "t", message: {} },
+    customEntry(sample({ model: "b" })),
+  ];
+  const out = loadSamples(entries);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].model, "a");
+  assert.equal(out[1].model, "b");
+});
+
+test("loadSamples returns [] for empty/foreign entries", () => {
+  assert.deepEqual(loadSamples([]), []);
+});
+
+test("sampleLabel falls back to provider then unknown", () => {
+  assert.equal(sampleLabel(sample({ model: "m" })), "m");
+  assert.equal(sampleLabel(sample({ model: "", provider: "p" })), "p");
+  assert.equal(sampleLabel(sample({ model: "", provider: "" })), "unknown");
+});
+
+test("distinctModels preserves first-seen order", () => {
+  const xs = [sample({ model: "b" }), sample({ model: "a" }), sample({ model: "b" })];
+  assert.deepEqual(distinctModels(xs), ["b", "a"]);
+});
+
+test("sampleTps uses e2e vs stream windows, null on degenerate", () => {
+  const s = sample({ tokens: 100, e2eMs: 2000, streamMs: 1000 });
+  assert.equal(sampleTps(s, "e2e"), 50);
+  assert.equal(sampleTps(s, "stream"), 100);
+  assert.equal(sampleTps(sample({ tokens: 100, e2eMs: 2000, streamMs: null }), "stream"), 50);
+  assert.equal(sampleTps(sample({ tokens: 0, e2eMs: 2000 }), "e2e"), null);
+  assert.equal(sampleTps(sample({ tokens: 100, e2eMs: 0 }), "e2e"), null);
+});
+
+test("barFor scales, blanks on non-positive", () => {
+  assert.equal(barFor(50, 100, 10).length <= 10, true);
+  assert.ok(barFor(100, 100, 10).startsWith("█".repeat(10).slice(0, 10)));
+  assert.equal(barFor(0, 100, 10), "");
+  assert.equal(barFor(-5, 100, 10), "");
+  assert.equal(barFor(50, 0, 10), "");
+  // half value ~ half width
+  assert.equal(barFor(50, 100, 8).replace(/[▁▂▃▄▅▆▇]/u, "X").length, 4);
+});
+
+test("renderGraph empty state", () => {
+  const lines = renderGraph([], { mode: "e2e", filter: "all", width: 20, offset: 0, maxRows: 8 });
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].kind, "empty");
+  assert.ok(lines[0].text.includes("No gauge samples"));
+  const noMatch = renderGraph([sample()], { mode: "e2e", filter: "zzz", width: 20, offset: 0, maxRows: 8 });
+  assert.ok(noMatch[0].text.includes("zzz"));
+});
+
+test("renderGraph single model: title, sections, rows, footer, legend", () => {
+  const xs = [sample({ tokens: 100, e2eMs: 2000 }), sample({ tokens: 200, e2eMs: 2000 })];
+  const lines = renderGraph(xs, { mode: "e2e", filter: "all", width: 20, offset: 0, maxRows: 8 });
+  const kinds = lines.map((l) => l.kind);
+  assert.ok(kinds.includes("title"));
+  assert.equal(kinds.filter((k) => k === "section").length, 2);
+  assert.equal(kinds.filter((k) => k === "row").length, 4); // 2 tps + 2 ttft
+  assert.ok(lines[0].text.includes("2 calls"));
+  assert.ok(lines.find((l) => l.kind === "footer").text.includes("avg"));
+  assert.ok(lines.find((l) => l.kind === "legend").text.includes("esc close"));
+  // max row scales: faster call has longer bar
+  const tpsRows = lines.filter((l) => l.kind === "row").slice(0, 2);
+  assert.ok(tpsRows[1].text.indexOf("t/s") > tpsRows[0].text.indexOf("t/s") || tpsRows[1].text.length >= tpsRows[0].text.length);
+});
+
+test("renderGraph multi-model filter omits others and rescales", () => {
+  const xs = [sample({ model: "a", tokens: 100, e2eMs: 2000 }), sample({ model: "b", tokens: 100, e2eMs: 2000 })];
+  const all = renderGraph(xs, { mode: "e2e", filter: "all", width: 20, offset: 0, maxRows: 8 });
+  assert.ok(all.some((l) => l.text.includes(" a") || l.text.includes(" b")));
+  const onlyA = renderGraph(xs, { mode: "e2e", filter: "a", width: 20, offset: 0, maxRows: 8 });
+  assert.ok(onlyA[0].text.includes("1 call"));
+  assert.ok(!onlyA.some((l) => l.kind === "row" && l.text.includes(" b")));
+});
+
+test("renderGraph TTFT-null renders blank gap, not zero", () => {
+  const xs = [sample({ ttftMs: null, streamMs: null })];
+  const lines = renderGraph(xs, { mode: "e2e", filter: "all", width: 20, offset: 0, maxRows: 8 });
+  const ttftRow = lines.filter((l) => l.kind === "row")[1];
+  assert.ok(ttftRow.text.includes("—"));
+  assert.ok(!ttftRow.text.includes("0ms"));
+});
+
+test("renderGraph honors offset/maxRows window with footer range", () => {
+  const xs = Array.from({ length: 5 }, (_, i) => sample({ ts: i }));
+  const lines = renderGraph(xs, { mode: "e2e", filter: "all", width: 20, offset: 3, maxRows: 2 });
+  assert.equal(lines.filter((l) => l.kind === "row").length, 4); // 2 per section
+  assert.ok(lines.find((l) => l.kind === "footer").text.includes("showing 4–5"));
+  assert.ok(lines.filter((l) => l.kind === "row")[0].text.startsWith("# 4"));
+});
+
+test("summarizeSamples groups per model with counts", () => {
+  assert.ok(summarizeSamples([], "e2e").includes("no samples"));
+  const xs = [
+    sample({ model: "a", tokens: 100, e2eMs: 1000, ttftMs: 100 }),
+    sample({ model: "a", tokens: 100, e2eMs: 1000, ttftMs: 300 }),
+    sample({ model: "b", tokens: 50, e2eMs: 1000, ttftMs: 200 }),
+  ];
+  const out = summarizeSamples(xs, "e2e");
+  assert.ok(out.includes("3 calls"));
+  assert.ok(out.includes("a: n=2"));
+  assert.ok(out.includes("b: n=1"));
+  assert.ok(out.includes("100 t/s")); // model a avg
 });

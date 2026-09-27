@@ -129,8 +129,25 @@ notify-based behaviour is unchanged.
 | `/gauge mode e2e\|stream` | Switch the t/s denominator |
 | `/gauge display pill\|icon` | Bracketed pill vs bare compact |
 | `/gauge icons emoji\|nerd` | Emoji glyphs vs Nerd Font glyphs |
+| `/gauge graph [model]` | History chart: per-call TPS + TTFT bars for this session (TUI overlay; text summary elsewhere). `←→` cycles the model filter, `↑↓`/`PgUp`/`PgDn` scroll, `esc` closes |
 
 Every change saves immediately and re-renders the status bar if metrics exist.
+
+## History graph (`/gauge graph`)
+
+Every assistant reply also appends one small record
+(`pi-gauge-sample`: model, tokens, TTFT, e2e/stream durations) to the session
+JSONL via `appendEntry` — invisible in the transcript, zero LLM context cost,
+and it survives session resume. `/gauge graph` renders it:
+
+- TUI: bordered overlay with per-call TPS bars (denominator follows your
+  `mode e2e|stream` setting) stacked over per-call TTFT bars, footer averages,
+  `←→` cycles the model filter (`all → model…`), `↑↓`/`PgUp`/`PgDn` scroll
+  long sessions, `esc` closes. `/gauge graph gpt-5.4` pre-filters.
+- Outside the TUI (`--print`, rpc/json): prints a per-model text summary
+  (calls, avg t/s, avg TTFT) instead of the overlay.
+
+Sessions from before this feature simply show "no samples yet".
 
 ## How it works
 

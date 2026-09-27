@@ -25,7 +25,7 @@
  * quantization noise. The final render at message_end is exempt: exact tokens
  * over the full window is the true average, even for short/fast responses.
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 export type MeasurementMode = "e2e" | "stream";
 export type DisplayMode = "pill" | "icon";
@@ -84,5 +84,73 @@ type GaugeRowId = "throughput" | "latency" | "mode" | "display" | "icons";
 export declare function rowValue(settings: GaugeSettings, id: GaugeRowId): string;
 /** Cycle a row's value forward (dir=1) or backward (dir=-1), mutating in place. */
 export declare function cycleRowValue(settings: GaugeSettings, id: GaugeRowId, dir: 1 | -1): void;
+/** customType for per-LLM-call gauge records (see plan 004). */
+export declare const SAMPLE_TYPE = "pi-gauge-sample";
+/**
+ * One persisted record per assistant message_end. Raw values only — TPS is
+ * derived at render time via the active measurementMode, so toggling modes
+ * re-interprets history without re-recording.
+ */
+export interface GaugeSample {
+    v: 1;
+    /** Wall-clock ms (Date.now()) at message_end — chart x-axis. */
+    ts: number;
+    provider: string;
+    model: string;
+    /** Null when no content delta arrived (aborted/empty stream). */
+    ttftMs: number | null;
+    /** Final output tokens (exact usage, else chars/4 estimate). */
+    tokens: number;
+    /** message_end − requestStart (performance.now basis). */
+    e2eMs: number;
+    /** message_end − firstDelta, null when no delta arrived. */
+    streamMs: number | null;
+}
+/** Short display label for a sample's model (never empty). */
+export declare function sampleLabel(s: GaugeSample): string;
+/** Defensively validate an unknown value as a v1 GaugeSample. */
+export declare function isGaugeSample(raw: unknown): raw is GaugeSample;
+/**
+ * Extract gauge samples from session entries (getBranch() output).
+ * Foreign custom entries and corrupt shapes are dropped.
+ */
+export declare function loadSamples(entries: SessionEntry[]): GaugeSample[];
+/** Distinct model labels in first-seen order (for the filter cycle). */
+export declare function distinctModels(samples: GaugeSample[]): string[];
+/**
+ * TPS for one sample under the given mode. Stream mode falls back to the
+ * e2e window when streamMs is missing; null when no positive window exists.
+ */
+export declare function sampleTps(s: GaugeSample, mode: MeasurementMode): number | null;
+/**
+ * Horizontal bar (≤ width cols) with fractional end block for sub-cell
+ * precision. Empty string for non-positive values — gaps stay blank, never
+ * zero-height noise.
+ */
+export declare function barFor(value: number, max: number, width: number): string;
+export interface GraphOpts {
+    mode: MeasurementMode;
+    /** "all" or a sampleLabel(). */
+    filter: string;
+    /** Max bar width in columns. */
+    width: number;
+    /** First visible sample index (into the filtered list). */
+    offset: number;
+    /** Max visible samples (scroll window). */
+    maxRows: number;
+}
+export type GraphLineKind = "title" | "section" | "row" | "footer" | "legend" | "empty";
+export interface GraphLine {
+    kind: GraphLineKind;
+    text: string;
+}
+/**
+ * Plain-text history chart (no ANSI — the overlay component adds theme
+ * colors). Two stacked sections (TPS + TTFT, separate scales) over one
+ * shared call index; scroll via offset/maxRows.
+ */
+export declare function renderGraph(samples: GaugeSample[], opts: GraphOpts): GraphLine[];
+/** Multi-line per-model summary for non-TUI modes (notify fallback). */
+export declare function summarizeSamples(samples: GaugeSample[], mode: MeasurementMode): string;
 export default function (pi: ExtensionAPI): void;
 export {};

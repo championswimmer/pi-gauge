@@ -112,9 +112,18 @@ mode=stream:  [⚡ 63.0 t/s ⏱ 412ms]   # tokens ÷ streaming only (first token
 
 ## The `/gauge` command
 
+Bare `/gauge` in the TUI opens a bordered settings dialog with all five
+settings as toggle rows, a live `demo` preview (mocked reply: 84.2 tokens in
+2 s, 412 ms TTFT) so you can see each change as you make it, and a
+`● unsaved` flag in the title while edits are uncommitted. `↑↓` move,
+`←→`/`space`/`enter` toggle, `ctrl+s` saves (persists to
+`~/.pi/agent/pi-gauge.json` and re-renders the status bar), `esc` exits
+without saving. Outside the TUI (or with subcommands) the classic
+notify-based behaviour is unchanged.
+
 | Command | What it does |
 |---|---|
-| `/gauge` | Show current settings |
+| `/gauge` | Open settings dialog (TUI) / show current settings (otherwise) |
 | `/gauge tps on\|off` | Show/hide throughput (`throughput` also works) |
 | `/gauge ttft on\|off` | Show/hide latency (`latency` also works) |
 | `/gauge mode e2e\|stream` | Switch the t/s denominator |

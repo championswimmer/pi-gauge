@@ -55,4 +55,18 @@ export declare function glyphFor(kind: GaugeKind, iconSet: IconSet): string;
  * - `displayMode === "pill"` wraps the body in "[...]".
  */
 export declare function renderText(settings: GaugeSettings, tokens: number, ttftMs: number | null, endTime: number, anchorStart: number, firstDeltaTime?: number | null): string | undefined;
+/**
+ * Demo preview string for the given settings, rendered from mocked values
+ * (84.2 tokens in 2s with 412ms TTFT). Returns "(hidden)" when both
+ * metrics are off. Pure — exported for testability.
+ */
+export declare function demoPreview(settings: GaugeSettings): string;
+/** True when two settings objects hold identical values. */
+export declare function settingsEqual(a: GaugeSettings, b: GaugeSettings): boolean;
+type GaugeRowId = "throughput" | "latency" | "mode" | "display" | "icons";
+/** Current display value of a dialog row for the given settings. */
+export declare function rowValue(settings: GaugeSettings, id: GaugeRowId): string;
+/** Cycle a row's value forward (dir=1) or backward (dir=-1), mutating in place. */
+export declare function cycleRowValue(settings: GaugeSettings, id: GaugeRowId, dir: 1 | -1): void;
 export default function (pi: ExtensionAPI): void;
+export {};

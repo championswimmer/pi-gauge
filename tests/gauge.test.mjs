@@ -8,6 +8,11 @@ import {
   formatDuration,
   glyphFor,
   renderText,
+  demoPreview,
+  settingsEqual,
+  rowValue,
+  cycleRowValue,
+  DEFAULTS,
 } from "../dist/index.js";
 
 function textMsg(text, usage) {
@@ -276,4 +281,72 @@ test("renderText keeps latency when TPS skipped for zero duration", () => {
   // TPS skipped (no first delta); latency still renders (value or em-dash)
   assert.ok(!out.includes("⚡"));
   assert.ok(out.includes("⏱"));
+});
+
+// ---------------------------------------------------------------------------
+// demoPreview / settingsEqual / rowValue / cycleRowValue (settings dialog)
+// ---------------------------------------------------------------------------
+
+test("demoPreview renders README example under defaults", () => {
+  assert.equal(demoPreview({ ...DEFAULTS }), "[⚡ 42.1 t/s ⏱ 412ms]");
+});
+
+test("demoPreview follows display and icon settings", () => {
+  assert.equal(
+    demoPreview({ ...DEFAULTS, displayMode: "icon" }),
+    "⚡ 42.1 ⏱ 412ms",
+  );
+  const nerd = demoPreview({ ...DEFAULTS, iconSet: "nerd" });
+  assert.ok(nerd.includes("\uF0E4") || nerd.includes(""));
+  assert.ok(nerd.startsWith("["));
+});
+
+test("demoPreview hides a toggled-off metric live", () => {
+  const noTps = demoPreview({ ...DEFAULTS, showThroughput: false });
+  assert.ok(!noTps.includes("⚡"));
+  assert.ok(noTps.includes("⏱"));
+  const noTtft = demoPreview({ ...DEFAULTS, showLatency: false });
+  assert.ok(noTtft.includes("⚡"));
+  assert.ok(!noTtft.includes("⏱"));
+});
+
+test("demoPreview returns (hidden) when both metrics off", () => {
+  assert.equal(
+    demoPreview({ ...DEFAULTS, showThroughput: false, showLatency: false }),
+    "(hidden)",
+  );
+});
+
+test("settingsEqual compares all five keys", () => {
+  assert.ok(settingsEqual({ ...DEFAULTS }, { ...DEFAULTS }));
+  assert.ok(!settingsEqual({ ...DEFAULTS }, { ...DEFAULTS, showThroughput: false }));
+  assert.ok(!settingsEqual({ ...DEFAULTS }, { ...DEFAULTS, measurementMode: "stream" }));
+  assert.ok(!settingsEqual({ ...DEFAULTS }, { ...DEFAULTS, displayMode: "icon" }));
+  assert.ok(!settingsEqual({ ...DEFAULTS }, { ...DEFAULTS, iconSet: "nerd" }));
+  assert.ok(!settingsEqual({ ...DEFAULTS }, { ...DEFAULTS, showLatency: false }));
+});
+
+test("rowValue reads each row's display value", () => {
+  assert.equal(rowValue({ ...DEFAULTS }, "throughput"), "on");
+  assert.equal(rowValue({ ...DEFAULTS, showThroughput: false }, "throughput"), "off");
+  assert.equal(rowValue({ ...DEFAULTS }, "latency"), "on");
+  assert.equal(rowValue({ ...DEFAULTS }, "mode"), "e2e");
+  assert.equal(rowValue({ ...DEFAULTS }, "display"), "pill");
+  assert.equal(rowValue({ ...DEFAULTS }, "icons"), "emoji");
+});
+
+test("cycleRowValue toggles forward and back", () => {
+  const s = { ...DEFAULTS };
+  cycleRowValue(s, "display", 1);
+  assert.equal(s.displayMode, "icon");
+  cycleRowValue(s, "display", -1);
+  assert.equal(s.displayMode, "pill");
+  cycleRowValue(s, "mode", 1);
+  assert.equal(s.measurementMode, "stream");
+  cycleRowValue(s, "mode", -1);
+  assert.equal(s.measurementMode, "e2e");
+  cycleRowValue(s, "throughput", 1);
+  assert.equal(s.showThroughput, false);
+  cycleRowValue(s, "throughput", -1);
+  assert.equal(s.showThroughput, true);
 });

@@ -19,11 +19,12 @@
  * chunk, so we fall back to a chars/4 estimate until message_end snaps to exact.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { matchesKey, visibleWidth, type Component } from "@earendil-works/pi-tui";
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -180,6 +181,190 @@ export function renderText(
 }
 
 // ---------------------------------------------------------------------------
+// Settings dialog (TUI overlay)
+// ---------------------------------------------------------------------------
+
+/** Mocked metrics for the demo preview: the README example reply. */
+const DEMO_TOKENS = 84.2;
+const DEMO_TTFT_MS = 412;
+const DEMO_END = 2000;
+const DEMO_START = 0;
+
+/**
+ * Demo preview string for the given settings, rendered from mocked values
+ * (84.2 tokens in 2s with 412ms TTFT). Returns "(hidden)" when both
+ * metrics are off. Pure — exported for testability.
+ */
+export function demoPreview(settings: GaugeSettings): string {
+	return (
+		renderText(settings, DEMO_TOKENS, DEMO_TTFT_MS, DEMO_END, DEMO_START, DEMO_TTFT_MS) ??
+		"(hidden)"
+	);
+}
+
+/** True when two settings objects hold identical values. */
+export function settingsEqual(a: GaugeSettings, b: GaugeSettings): boolean {
+	return (
+		a.showThroughput === b.showThroughput &&
+		a.showLatency === b.showLatency &&
+		a.measurementMode === b.measurementMode &&
+		a.displayMode === b.displayMode &&
+		a.iconSet === b.iconSet
+	);
+}
+
+type GaugeRowId = "throughput" | "latency" | "mode" | "display" | "icons";
+
+interface GaugeRow {
+	id: GaugeRowId;
+	label: string;
+	values: [string, string];
+}
+
+const GAUGE_ROWS: GaugeRow[] = [
+	{ id: "throughput", label: "throughput (t/s)", values: ["on", "off"] },
+	{ id: "latency", label: "latency (TTFT)", values: ["on", "off"] },
+	{ id: "mode", label: "measurement mode", values: ["e2e", "stream"] },
+	{ id: "display", label: "display style", values: ["pill", "icon"] },
+	{ id: "icons", label: "icon set", values: ["emoji", "nerd"] },
+];
+
+/** Current display value of a dialog row for the given settings. */
+export function rowValue(settings: GaugeSettings, id: GaugeRowId): string {
+	switch (id) {
+		case "throughput":
+			return settings.showThroughput ? "on" : "off";
+		case "latency":
+			return settings.showLatency ? "on" : "off";
+		case "mode":
+			return settings.measurementMode;
+		case "display":
+			return settings.displayMode;
+		case "icons":
+			return settings.iconSet;
+	}
+}
+
+/** Cycle a row's value forward (dir=1) or backward (dir=-1), mutating in place. */
+export function cycleRowValue(settings: GaugeSettings, id: GaugeRowId, dir: 1 | -1): void {
+	const row = GAUGE_ROWS.find((r) => r.id === id)!;
+	const cur = row.values.indexOf(rowValue(settings, id));
+	const next = row.values[(cur + dir + row.values.length) % row.values.length]!;
+	switch (id) {
+		case "throughput":
+			settings.showThroughput = next === "on";
+			break;
+		case "latency":
+			settings.showLatency = next === "on";
+			break;
+		case "mode":
+			settings.measurementMode = next as MeasurementMode;
+			break;
+		case "display":
+			settings.displayMode = next as DisplayMode;
+			break;
+		case "icons":
+			settings.iconSet = next as IconSet;
+			break;
+	}
+}
+
+const DIALOG_WIDTH = 54;
+const VALUE_COL_WIDTH = 6; // widest value ("stream") keeps < ... > blocks aligned
+
+/**
+ * Bordered settings dialog: all five settings as toggle rows plus a live
+ * demo preview rendered from mocked values. Edits mutate `draft` only;
+ * the caller commits on save. ctrl+s → done(true), esc → done(false).
+ */
+class GaugeDialog implements Component {
+	private selected = 0;
+
+	constructor(
+		private theme: Theme,
+		private draft: GaugeSettings,
+		private baseline: GaugeSettings,
+		private done: (saved: boolean) => void,
+	) {}
+
+	private get dirty(): boolean {
+		return !settingsEqual(this.draft, this.baseline);
+	}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, "escape")) {
+			this.done(false);
+			return;
+		}
+		// ctrl+s saves (raw \x13 fallback in case the key parser differs).
+		if (data === "\x13" || matchesKey(data, "ctrl+s")) {
+			this.done(true);
+			return;
+		}
+
+		const row = GAUGE_ROWS[this.selected]!;
+		if (matchesKey(data, "up")) {
+			this.selected = (this.selected + GAUGE_ROWS.length - 1) % GAUGE_ROWS.length;
+		} else if (matchesKey(data, "down")) {
+			this.selected = (this.selected + 1) % GAUGE_ROWS.length;
+		} else if (matchesKey(data, "left")) {
+			cycleRowValue(this.draft, row.id, -1);
+		} else if (matchesKey(data, "right")) {
+			cycleRowValue(this.draft, row.id, 1);
+		} else if (matchesKey(data, "return") || data === " ") {
+			cycleRowValue(this.draft, row.id, 1);
+		}
+	}
+
+	render(_width: number): string[] {
+		const th = this.theme;
+		const innerW = DIALOG_WIDTH - 2;
+		const border = (s: string) => th.fg("border", s);
+		const pad = (s: string) => s + " ".repeat(Math.max(0, innerW - visibleWidth(s)));
+		const row = (content: string) => border("│") + pad(content) + border("│");
+		const divider = () => border(`├${"─".repeat(innerW)}┤`);
+
+		const lines: string[] = [];
+		lines.push(border(`╭${"─".repeat(innerW)}╮`));
+
+		// Title + dirty flag.
+		const title = ` ${th.bold("pi-gauge settings")}`;
+		const flag = this.dirty ? th.fg("warning", "● unsaved") : th.fg("dim", "saved");
+		const gap = " ".repeat(Math.max(0, innerW - visibleWidth(title) - visibleWidth(flag)));
+		lines.push(row(`${title}${gap}${flag}`));
+		lines.push(divider());
+
+		// Toggle rows.
+		for (let i = 0; i < GAUGE_ROWS.length; i++) {
+			const r = GAUGE_ROWS[i]!;
+			const isSelected = i === this.selected;
+			const cursor = isSelected ? th.fg("accent", "▶") : " ";
+			const label = isSelected ? th.fg("accent", r.label) : th.fg("text", r.label);
+			const value = rowValue(this.draft, r.id).padEnd(VALUE_COL_WIDTH);
+			const field = isSelected ? th.fg("accent", `< ${value} >`) : th.fg("dim", `< ${value} >`);
+			const left = ` ${cursor} ${label} `;
+			const fieldGap = " ".repeat(
+				Math.max(0, innerW - visibleWidth(left) - visibleWidth(field) - 1),
+			);
+			lines.push(row(`${left}${fieldGap}${field} `));
+		}
+		lines.push(divider());
+
+		// Demo preview with mocked values.
+		const preview = demoPreview(this.draft);
+		const demoLabel = th.fg("dim", "demo");
+		const demoValue = preview === "(hidden)" ? th.fg("dim", preview) : th.fg("text", preview);
+		lines.push(row(` ${demoLabel}  ${demoValue}`));
+		lines.push(row(` ${th.fg("dim", "↑↓ move · ←→ toggle · ctrl+s save · esc")}`));
+
+		lines.push(border(`╰${"─".repeat(innerW)}╯`));
+		return lines;
+	}
+
+	invalidate(): void {}
+}
+
+// ---------------------------------------------------------------------------
 // Extension
 // ---------------------------------------------------------------------------
 
@@ -279,7 +464,32 @@ export default function (pi: ExtensionAPI) {
 			const [rawSub, rawValue] = args.trim().toLowerCase().split(/\s+/);
 
 			if (!rawSub) {
+				// No args: interactive settings dialog in TUI mode, plain
+				// settings line everywhere else (rpc/json/print have no overlay).
+				if (ctx.mode !== "tui") {
+					ctx.ui.notify(settingsLine(), "info");
+					return;
+				}
+				const draft: GaugeSettings = { ...settings };
+				const baseline: GaugeSettings = { ...settings };
+				const saved = await ctx.ui.custom<boolean>(
+					(_tui, theme, _kb, done) =>
+						new GaugeDialog(theme, draft, baseline, done),
+					{
+						overlay: true,
+						overlayOptions: { anchor: "center", width: DIALOG_WIDTH + 4 },
+					},
+				);
+				if (!saved) {
+					if (!settingsEqual(draft, baseline))
+						ctx.ui.notify("pi-gauge: discarded unsaved changes", "warning");
+					return;
+				}
+				settings = draft;
+				saveSettings(settings);
 				ctx.ui.notify(settingsLine(), "info");
+				if (hasMetrics()) refreshStatus(ctx, performance.now());
+				else ctx.ui.setStatus(STATUS_KEY, undefined);
 				return;
 			}
 

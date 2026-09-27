@@ -22,7 +22,7 @@ It ticks live during streaming, then settles on the final numbers. Waiting for t
 ## Install
 
 ```sh
-pi install pi-gauge
+pi install npm:pi-gauge
 ```
 
 Requires a `pi` coding agent with extension support. Settings persist to `~/.pi/agent/pi-gauge.json`.

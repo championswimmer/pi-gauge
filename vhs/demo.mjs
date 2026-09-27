@@ -70,5 +70,5 @@ await sleep(800);
 console.log(`\n  ${dim("waiting for first token:")} ${green(renderText(pill, 0, null, 1000, 0, null))} ${dim("(TTFT unknown yet)")}`);
 await sleep(1200);
 
-console.log(`\n  ${green("✔")} ${dim("done — try it:")} ${cyan("pi install pi-gauge")}`);
+console.log(`\n  ${green("✔")} ${dim("done — try it:")} ${cyan("pi install npm:pi-gauge")}`);
 await sleep(2500);

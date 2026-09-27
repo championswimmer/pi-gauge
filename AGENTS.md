@@ -53,7 +53,7 @@ pi-gauge/
 - Status bar: `ctx.ui.setStatus(key: string, text: string | undefined)`. Pass `undefined` to clear.
 - Commands: `pi.registerCommand("gauge", { description, handler: async (args: string, ctx) => {...} })`. The handler receives raw args string; parse subcommands manually.
 - Local testing: `pi -e ./dist/index.js` for quick tests (note: `dist/`, not `src/` — must `npm run build` first), or symlink/copy into `~/.pi/agent/extensions/` (global, hot-reloadable with `/reload`) or `.pi/extensions/` (project-local, requires project trust).
-- Package distribution: `package.json` with `"pi": { "extensions": ["./dist/index.js"] }`, installable via `pi install pi-gauge`.
+- Package distribution: `package.json` with `"pi": { "extensions": ["./dist/index.js"] }`, installable via `pi install npm:pi-gauge`.
 
 ### Where the measurements come from
 

@@ -1,10 +1,25 @@
 # pi-gauge
 
+[![npm version](https://img.shields.io/npm/v/pi-gauge?style=flat-square)](https://www.npmjs.com/package/pi-gauge)
+[![npm downloads](https://img.shields.io/npm/dm/pi-gauge?style=flat-square)](https://www.npmjs.com/package/pi-gauge)
+
 Live LLM speed in pi's status bar — **throughput** (tokens/sec) and **latency** (time-to-first-token) at a glance, updating while the model streams.
 
 ![pi-gauge demo](https://raw.githubusercontent.com/championswimmer/pi-gauge/main/assets/demo.gif)
 
 > **v0.1.0 work-in-progress** — status-bar format may change before 1.0.
+
+## Check out my other Pi extensions
+
+- [![pi-auto-theme](https://img.shields.io/badge/🎨_pi--auto--theme-blue?style=flat-square)](https://github.com/championswimmer/pi-auto-theme) — Auto-syncs Pi theme with OS dark/light mode.
+- [![pi-cache-graph](https://img.shields.io/badge/📊_pi--cache--graph-orange?style=flat-square)](https://github.com/championswimmer/pi-cache-graph) — Real-time prompt cache hit rates and token metrics.
+- [![pi-checklist](https://img.shields.io/badge/✅_pi--checklist-teal?style=flat-square)](https://github.com/championswimmer/pi-checklist) — Session task checklist with dependencies and a TUI renderer.
+- [![pi-context-prune](https://img.shields.io/badge/✂️_pi--context--prune-green?style=flat-square)](https://github.com/championswimmer/pi-context-prune) — Prunes verbose tool outputs from context while preserving history.
+- [![pi-context-usage](https://img.shields.io/badge/🪟_pi--context--usage-purple?style=flat-square)](https://github.com/championswimmer/pi-context-usage) — Dot-grid visualization of context window token usage.
+- [![pi-gauge](https://img.shields.io/badge/⚡_pi--gauge-yellow?style=flat-square)](https://github.com/championswimmer/pi-gauge) — Live tokens/sec and TTFT in the status bar.
+- [![pi-subscription-meter](https://img.shields.io/badge/💳_pi--subscription--meter-red?style=flat-square)](https://github.com/championswimmer/pi-subscription-meter) — Tracks subscription quotas and rate limits across AI providers.
+
+---
 
 ## What you get
 

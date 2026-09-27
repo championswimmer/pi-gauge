@@ -79,6 +79,8 @@ before_provider_request ──► first *_delta ──► ...deltas... ──►
 
 - Multiple LLM calls happen per agent run (tool loop) → re-anchor state on each `before_provider_request`.
 - Throttle `setStatus` calls during streaming (~4/sec) — deltas arrive fast.
+- **Mid-stream TPS floor:** TPS is only rendered once the denominator window reaches `MIN_TPS_WINDOW_MS` (500ms) — right after the first delta the window is single-digit ms while cumulative usage has already jumped (tool-call args burst in), producing absurd values like 5000 t/s. The `message_end` render passes `final=true` and bypasses the floor (exact tokens / full window = true average). See `.agents/plans/003-tps-spike-fix.md`.
+- Verified in pi sources: `before_provider_request` fires once per LLM call; compaction and the CacheWarmer bypass it; `usage.output` is per-message (never session-cumulative) for all pi-ai providers.
 - Aborted/error streams: keep whatever partial metrics exist; don't crash on missing data.
 
 ## Settings (implemented — see `.agents/plans/001-measurement-modes.md` for rationale)
@@ -102,3 +104,4 @@ before_provider_request ──► first *_delta ──► ...deltas... ──►
 - [x] Smoke-tested (`pi -e ./dist/index.js -p "..."` loads clean; harness-driven event test renders `[⚡ 71.2 t/s ⏱ 50ms]` + nerd/icon variants, `/gauge` toggles persist)
 - [x] Git repo initialized + pushed to `championswimmer/pi-gauge`
 - [x] Published v0.1.0 to npm (`pi-gauge@0.1.0`, `latest`; first publish manual — future releases via trusted publishing + `node scripts/release.mjs`)
+- [x] Fix mid-stream TPS spikes (`.agents/plans/003-tps-spike-fix.md` — 500ms min window for mid-stream renders, final render exempt; 39 tests green)

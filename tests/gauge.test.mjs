@@ -8,6 +8,7 @@ import {
   formatDuration,
   glyphFor,
   renderText,
+  MIN_TPS_WINDOW_MS,
   demoPreview,
   settingsEqual,
   rowValue,
@@ -172,12 +173,13 @@ test("renderText e2e vs stream produce different TPS from same inputs", () => {
     displayMode: "icon",
     iconSet: "emoji",
   };
-  // tokens=100 over 1s e2e (end-anchorStart) vs 0.2s stream (end-firstDelta)
-  const e2e = renderText({ ...tpsOnly, measurementMode: "e2e" }, 100, 800, 1000, 0, 800);
-  const stream = renderText({ ...tpsOnly, measurementMode: "stream" }, 100, 800, 1000, 0, 800);
+  // tokens=100 over 2s e2e (end-anchorStart) vs 1.2s stream (end-firstDelta);
+  // both windows are above MIN_TPS_WINDOW_MS so both render.
+  const e2e = renderText({ ...tpsOnly, measurementMode: "e2e" }, 100, 800, 2000, 0, 800);
+  const stream = renderText({ ...tpsOnly, measurementMode: "stream" }, 100, 800, 2000, 0, 800);
   assert.notEqual(e2e, stream);
-  assert.match(e2e, /100/); // 100 tokens / 1s
-  assert.match(stream, /500/); // 100 tokens / 0.2s
+  assert.match(e2e, /50\.0/); // 100 tokens / 2s
+  assert.match(stream, /83\.3/); // 100 tokens / 1.2s
 });
 
 test("renderText stream mode uses end-firstDelta denominator", () => {
@@ -188,9 +190,10 @@ test("renderText stream mode uses end-firstDelta denominator", () => {
     displayMode: "icon",
     iconSet: "emoji",
   };
-  // 50 tokens / (2000-1900)ms = 500 t/s
-  const out = renderText(settings, 50, 100, 2000, 1000, 1900);
-  assert.match(out, /500/);
+  // 50 tokens / (2000-1500)ms = 100 t/s; an e2e denominator would give 25 t/s.
+  const out = renderText(settings, 50, 100, 2000, 0, 1500);
+  assert.match(out, /100/);
+  assert.ok(!out.includes("25.0"));
 });
 
 test("renderText with measurementMode e2e uses anchorStart denominator", () => {
@@ -281,6 +284,56 @@ test("renderText keeps latency when TPS skipped for zero duration", () => {
   // TPS skipped (no first delta); latency still renders (value or em-dash)
   assert.ok(!out.includes("⚡"));
   assert.ok(out.includes("⏱"));
+});
+
+// ---------------------------------------------------------------------------
+// renderText min-window floor (mid-stream spike guard, plan 003)
+// ---------------------------------------------------------------------------
+
+const STREAM_PILL = { ...PILL_EMOJI, measurementMode: "stream" };
+
+test("renderText hides mid-stream TPS while the window is below MIN_TPS_WINDOW_MS", () => {
+  // The reported bug: 40 cumulative tokens 8ms after the first delta in
+  // stream mode used to render "5000 t/s" of pure quantization noise.
+  const out = renderText(STREAM_PILL, 40, 410, 418, 0, 410);
+  assert.ok(!out.includes("⚡"));
+  assert.ok(!out.includes("5000"));
+  assert.ok(out.includes("⏱"));
+  assert.ok(out.includes("410ms")); // TTFT still shown
+});
+
+test("renderText shows mid-stream TPS once the window reaches MIN_TPS_WINDOW_MS", () => {
+  const just = renderText(STREAM_PILL, 40, 410, 410 + MIN_TPS_WINDOW_MS - 1, 0, 410);
+  assert.ok(!just.includes("⚡"));
+  const at = renderText(STREAM_PILL, 40, 410, 410 + MIN_TPS_WINDOW_MS, 0, 410);
+  assert.ok(at.includes("⚡"));
+  assert.ok(at.includes("80.0")); // 40 tokens / 0.5s
+});
+
+test("renderText mid-stream floor also applies in e2e mode", () => {
+  // Cached prompt: TTFT 60ms, 25 tokens at the first delta render.
+  const out = renderText(PILL_EMOJI, 25, 60, 60, 0, 60);
+  assert.ok(!out.includes("⚡"));
+  assert.ok(out.includes("60ms"));
+});
+
+test("renderText final render bypasses the min-window floor", () => {
+  // message_end: exact tokens over the full (short) stream — the true average
+  // for a fast response, so it is shown even below MIN_TPS_WINDOW_MS.
+  const out = renderText(STREAM_PILL, 40, 410, 418, 0, 410, true);
+  assert.ok(out.includes("⚡"));
+  assert.ok(out.includes("5000")); // 40 tokens / 8ms, exact
+});
+
+test("renderText final render still skips TPS on zero duration", () => {
+  const tpsOnly = {
+    showThroughput: true,
+    showLatency: false,
+    measurementMode: "stream",
+    displayMode: "icon",
+    iconSet: "emoji",
+  };
+  assert.equal(renderText(tpsOnly, 100, 50, 1000, 1000, 1000, true), undefined);
 });
 
 // ---------------------------------------------------------------------------

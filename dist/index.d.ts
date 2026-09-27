@@ -17,6 +17,13 @@
  * Mid-stream token count uses partial.usage.output when the provider streams
  * cumulative usage (Anthropic, Google); OpenAI only sends usage in the final
  * chunk, so we fall back to a chars/4 estimate until message_end snaps to exact.
+ *
+ * Mid-stream TPS is hidden until the denominator window reaches
+ * MIN_TPS_WINDOW_MS — right after the first delta the window is single-digit
+ * milliseconds while cumulative usage has already jumped (tool-call arguments
+ * stream in fast bursts), so the ratio reads as thousands of t/s of pure
+ * quantization noise. The final render at message_end is exempt: exact tokens
+ * over the full window is the true average, even for short/fast responses.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
@@ -31,6 +38,13 @@ export interface GaugeSettings {
     iconSet: IconSet;
 }
 export declare const DEFAULTS: GaugeSettings;
+/**
+ * Minimum denominator window (ms) before a mid-stream TPS value is shown.
+ * Below this, cumulative-tokens / elapsed is quantization noise (a few dozen
+ * tokens over a few ms renders as thousands of t/s). The final message_end
+ * render bypasses this floor — its tokens and window are both exact.
+ */
+export declare const MIN_TPS_WINDOW_MS = 500;
 export type GaugeKind = "tps" | "ttft";
 /** Sum character lengths of all text/thinking/toolcall content (for chars/4 estimate). */
 export declare function contentChars(message: AssistantMessage): number;
@@ -51,10 +65,12 @@ export declare function glyphFor(kind: GaugeKind, iconSet: IconSet): string;
  *   `endTime - firstDeltaTime` when passed, else `endTime - anchorStart`
  *   (callers may pass the first-delta time as `anchorStart` directly).
  * - `ttftMs === null` (no first delta yet) renders TTFT as "—" and skips TPS.
- * - `durationSec <= 0` or `tokens <= 0` skips the TPS part.
+ * - Mid-stream (`final === false`) TPS is skipped while the denominator window
+ *   is below MIN_TPS_WINDOW_MS (quantization noise); `tokens <= 0` or a
+ *   non-positive duration always skips TPS.
  * - `displayMode === "pill"` wraps the body in "[...]".
  */
-export declare function renderText(settings: GaugeSettings, tokens: number, ttftMs: number | null, endTime: number, anchorStart: number, firstDeltaTime?: number | null): string | undefined;
+export declare function renderText(settings: GaugeSettings, tokens: number, ttftMs: number | null, endTime: number, anchorStart: number, firstDeltaTime?: number | null, final?: boolean): string | undefined;
 /**
  * Demo preview string for the given settings, rendered from mocked values
  * (84.2 tokens in 2s with 412ms TTFT). Returns "(hidden)" when both

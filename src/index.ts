@@ -17,6 +17,13 @@
  * Mid-stream token count uses partial.usage.output when the provider streams
  * cumulative usage (Anthropic, Google); OpenAI only sends usage in the final
  * chunk, so we fall back to a chars/4 estimate until message_end snaps to exact.
+ *
+ * Mid-stream TPS is hidden until the denominator window reaches
+ * MIN_TPS_WINDOW_MS — right after the first delta the window is single-digit
+ * milliseconds while cumulative usage has already jumped (tool-call arguments
+ * stream in fast bursts), so the ratio reads as thousands of t/s of pure
+ * quantization noise. The final render at message_end is exempt: exact tokens
+ * over the full window is the true average, even for short/fast responses.
  */
 
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
@@ -96,6 +103,14 @@ function saveSettings(s: GaugeSettings): void {
 const STATUS_KEY = "gauge";
 const THROTTLE_MS = 250;
 
+/**
+ * Minimum denominator window (ms) before a mid-stream TPS value is shown.
+ * Below this, cumulative-tokens / elapsed is quantization noise (a few dozen
+ * tokens over a few ms renders as thousands of t/s). The final message_end
+ * render bypasses this floor — its tokens and window are both exact.
+ */
+export const MIN_TPS_WINDOW_MS = 500;
+
 export type GaugeKind = "tps" | "ttft";
 
 /** Sum character lengths of all text/thinking/toolcall content (for chars/4 estimate). */
@@ -140,7 +155,9 @@ export function glyphFor(kind: GaugeKind, iconSet: IconSet): string {
  *   `endTime - firstDeltaTime` when passed, else `endTime - anchorStart`
  *   (callers may pass the first-delta time as `anchorStart` directly).
  * - `ttftMs === null` (no first delta yet) renders TTFT as "—" and skips TPS.
- * - `durationSec <= 0` or `tokens <= 0` skips the TPS part.
+ * - Mid-stream (`final === false`) TPS is skipped while the denominator window
+ *   is below MIN_TPS_WINDOW_MS (quantization noise); `tokens <= 0` or a
+ *   non-positive duration always skips TPS.
  * - `displayMode === "pill"` wraps the body in "[...]".
  */
 export function renderText(
@@ -150,6 +167,7 @@ export function renderText(
 	endTime: number,
 	anchorStart: number,
 	firstDeltaTime?: number | null,
+	final = false,
 ): string | undefined {
 	const parts: string[] = [];
 
@@ -158,11 +176,12 @@ export function renderText(
 			settings.measurementMode === "stream" && firstDeltaTime != null
 				? firstDeltaTime
 				: anchorStart;
-		const durationSec = (endTime - start) / 1000;
-		if (durationSec > 0 && tokens > 0) {
+		const durationMs = endTime - start;
+		const windowOk = final ? durationMs > 0 : durationMs >= MIN_TPS_WINDOW_MS;
+		if (windowOk && tokens > 0) {
 			const suffix = settings.displayMode === "pill" ? " t/s" : "";
 			parts.push(
-				`${glyphFor("tps", settings.iconSet)} ${formatTps(tokens / durationSec)}${suffix}`,
+				`${glyphFor("tps", settings.iconSet)} ${formatTps(tokens / (durationMs / 1000))}${suffix}`,
 			);
 		}
 	}
@@ -394,10 +413,10 @@ export default function (pi: ExtensionAPI) {
 		return lastTokens > 0 || lastTtftMs !== null;
 	}
 
-	function refreshStatus(ctx: any, endTime: number) {
+	function refreshStatus(ctx: any, endTime: number, final = false) {
 		ctx.ui.setStatus(
 			STATUS_KEY,
-			renderText(settings, lastTokens, lastTtftMs, endTime, requestStart, firstDeltaTime),
+			renderText(settings, lastTokens, lastTtftMs, endTime, requestStart, firstDeltaTime, final),
 		);
 	}
 
@@ -445,8 +464,10 @@ export default function (pi: ExtensionAPI) {
 		// Snap to exact final usage when available; otherwise keep the estimate.
 		if (message.usage && message.usage.output > 0) lastTokens = message.usage.output;
 		// Guard: empty/error streams never produce a first delta — renderText
-		// then shows TTFT as "—" and skips TPS.
-		refreshStatus(ctx, now);
+		// then shows TTFT as "—" and skips TPS. The final render bypasses the
+		// mid-stream window floor: exact tokens over the full window is the
+		// true average, even for short responses.
+		refreshStatus(ctx, now, true);
 	});
 
 	function settle() {

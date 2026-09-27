@@ -1,0 +1,19 @@
+{
+  // Build src/*.ts -> dist/*.js (CommonJS-free ESM, Node 20+).
+  // Relative imports keep their ".js" suffixes (./store.js), which tsc
+  // resolves to the sibling .ts files under moduleResolution nodenext.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true,
+    "sourceMap": false,
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*.ts"]
+}

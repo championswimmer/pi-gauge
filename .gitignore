@@ -1,0 +1,32 @@
+# NOTE: dist/ is intentionally TRACKED (not ignored). pi installs git packages
+# with `npm install --omit=dev` and no build step, so ./dist/index.js must
+# exist in the clone. Rebuild it with `npm run build` before every commit
+# that touches src/ (and `prepublishOnly` rebuilds it again on publish).
+
+# macOS
+.DS_Store
+
+# Node / package manager
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tgz
+
+# Local environment / credentials
+.env
+.env.*
+!.env.example
+.npmrc
+
+# Editors
+.vscode/
+.idea/
+
+# Pi local project config / experimentation
+.pi/
+
+# TypeScript / misc
+*.tsbuildinfo
+*.log

@@ -1,0 +1,21 @@
+# The published tarball is a whitelist (see "files" in package.json:
+# dist + README.md + LICENSE). This file is belt-and-braces so a future
+# removal of "files" can never leak sources or dev scaffolding to npm.
+
+# TypeScript sources — dist/ is what pi loads (faster, no jiti transpile)
+src/
+tsconfig.json
+
+# Repo scaffolding / dev notes, never part of the runtime package
+.agents/
+.gitignore
+.vscode/
+.idea/
+.pi/
+
+# Logs / local env / pack artifacts
+*.log
+*.tgz
+.env
+.env.*
+!.env.example

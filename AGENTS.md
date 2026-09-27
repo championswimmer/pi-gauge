@@ -100,5 +100,5 @@ before_provider_request ──► first *_delta ──► ...deltas... ──►
 - [x] Extension implemented (`src/index.ts` → `dist/index.js`, 6 pure helpers exported for tests)
 - [x] Unit tests (`tests/gauge.test.mjs`, 27 tests, `npm test` green)
 - [x] Smoke-tested (`pi -e ./dist/index.js -p "..."` loads clean; harness-driven event test renders `[⚡ 71.2 t/s ⏱ 50ms]` + nerd/icon variants, `/gauge` toggles persist)
-- [ ] Git repo initialized + pushed to `championswimmer/pi-gauge`
-- [ ] Published / installable via `pi install pi-gauge` (`pi-gauge` name verified free on npm)
+- [x] Git repo initialized + pushed to `championswimmer/pi-gauge`
+- [x] Published v0.1.0 to npm (`pi-gauge@0.1.0`, `latest`; first publish manual — future releases via trusted publishing + `node scripts/release.mjs`)

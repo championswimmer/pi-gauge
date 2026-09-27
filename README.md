@@ -134,7 +134,8 @@ settings as toggle rows, a live `demo` preview (mocked reply: 84.2 tokens in
 `←→`/`space`/`enter` toggle, `ctrl+s` saves (persists to
 `~/.pi/agent/pi-gauge.json` and re-renders the status bar), `esc` exits
 without saving. Outside the TUI (or with subcommands) the classic
-notify-based behaviour is unchanged.
+notify-based behaviour is unchanged. Subcommands and their values
+tab-complete in the TUI (`/gauge m` → `mode`, `/gauge mode ` → `e2e|stream`).
 
 | Command | What it does |
 |---|---|

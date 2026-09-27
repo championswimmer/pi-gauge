@@ -31,7 +31,7 @@ import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { matchesKey, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import { matchesKey, visibleWidth, type AutocompleteItem, type Component } from "@earendil-works/pi-tui";
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -230,6 +230,105 @@ export function settingsEqual(a: GaugeSettings, b: GaugeSettings): boolean {
 		a.displayMode === b.displayMode &&
 		a.iconSet === b.iconSet
 	);
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand completion (tab-complete for /gauge args)
+// ---------------------------------------------------------------------------
+
+/** First-level /gauge subcommands with popup descriptions. */
+const GAUGE_SUBCOMMANDS: { name: string; description: string }[] = [
+	{ name: "tps", description: "show/hide throughput (t/s)" },
+	{ name: "ttft", description: "show/hide latency (TTFT)" },
+	{ name: "mode", description: "t/s denominator: e2e|stream" },
+	{ name: "display", description: "pill|icon style" },
+	{ name: "icons", description: "emoji|nerd glyphs" },
+	{ name: "graph", description: "per-call history chart" },
+	{ name: "throughput", description: "alias of tps" },
+	{ name: "latency", description: "alias of ttft" },
+];
+
+/**
+ * Second-position values per subcommand. `graph` has none: its optional
+ * model filter is dynamic (session models), and getArgumentCompletions
+ * receives no ctx, so that position completes to nothing.
+ */
+const GAUGE_SUB_VALUES: Record<string, { value: string; description: string }[]> = {
+	tps: [
+		{ value: "on", description: "show throughput" },
+		{ value: "off", description: "hide throughput" },
+	],
+	ttft: [
+		{ value: "on", description: "show latency" },
+		{ value: "off", description: "hide latency" },
+	],
+	mode: [
+		{ value: "e2e", description: "t/s over request → message_end" },
+		{ value: "stream", description: "t/s over first delta → message_end" },
+	],
+	display: [
+		{ value: "pill", description: "bracketed pill" },
+		{ value: "icon", description: "bare compact" },
+	],
+	icons: [
+		{ value: "emoji", description: "emoji glyphs (works everywhere)" },
+		{ value: "nerd", description: "nerd-font glyphs" },
+	],
+};
+
+/** Legacy aliases share their primary subcommand's value set. */
+function canonicalSub(sub: string): string {
+	return sub === "throughput" ? "tps" : sub === "latency" ? "ttft" : sub;
+}
+
+/**
+ * Tab-completion items for /gauge arguments. Pi passes everything after
+ * "/gauge " as `prefix` and substitutes the chosen item's `value` for the
+ * whole prefix, so second-position items carry the full "sub value" text.
+ * Returns null when there is nothing to complete (pi then shows no popup).
+ * Pure — exported for testability.
+ */
+export function gaugeCompletions(prefix: string): AutocompleteItem[] | null {
+	const endsWithSpace = /\s$/.test(prefix);
+	const tokens = prefix.trim().toLowerCase().split(/\s+/).filter(Boolean);
+
+	if (tokens.length === 0) {
+		return GAUGE_SUBCOMMANDS.map((s) => ({
+			value: s.name,
+			label: s.name,
+			description: s.description,
+		}));
+	}
+
+	const sub = tokens[0]!;
+	if (tokens.length === 1 && !endsWithSpace) {
+		const hits = GAUGE_SUBCOMMANDS.filter((s) => s.name.startsWith(sub));
+		return hits.length > 0
+			? hits.map((s) => ({ value: s.name, label: s.name, description: s.description }))
+			: null;
+	}
+
+	const values = GAUGE_SUB_VALUES[canonicalSub(sub)];
+	if (!values) return null; // unknown subcommand, or graph's dynamic model filter
+	if (tokens.length === 1) {
+		// "sub " — offer every value.
+		return values.map((v) => ({
+			value: `${sub} ${v.value}`,
+			label: v.value,
+			description: v.description,
+		}));
+	}
+	if (tokens.length === 2 && !endsWithSpace) {
+		const hits = values.filter((v) => v.value.startsWith(tokens[1]!));
+		return hits.length > 0
+			? hits.map((v) => ({
+					value: `${sub} ${v.value}`,
+					label: v.value,
+					description: v.description,
+				}))
+			: null;
+	}
+	return null; // completed pair + trailing space, or 3rd+ token
 }
 
 type GaugeRowId = "throughput" | "latency" | "mode" | "display" | "icons";
@@ -840,6 +939,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("gauge", {
 		description:
 			"Configure pi-gauge display: /gauge [tps|ttft on|off] [mode e2e|stream] [display pill|icon] [icons emoji|nerd] [graph [model]]",
+		getArgumentCompletions: (prefix) => gaugeCompletions(prefix),
 		handler: async (args, ctx) => {
 			const [rawSub, rawValue] = args.trim().toLowerCase().split(/\s+/);
 

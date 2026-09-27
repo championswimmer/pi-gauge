@@ -27,6 +27,7 @@
  */
 import type { ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { type AutocompleteItem } from "@earendil-works/pi-tui";
 export type MeasurementMode = "e2e" | "stream";
 export type DisplayMode = "pill" | "icon";
 export type IconSet = "emoji" | "nerd";
@@ -79,6 +80,14 @@ export declare function renderText(settings: GaugeSettings, tokens: number, ttft
 export declare function demoPreview(settings: GaugeSettings): string;
 /** True when two settings objects hold identical values. */
 export declare function settingsEqual(a: GaugeSettings, b: GaugeSettings): boolean;
+/**
+ * Tab-completion items for /gauge arguments. Pi passes everything after
+ * "/gauge " as `prefix` and substitutes the chosen item's `value` for the
+ * whole prefix, so second-position items carry the full "sub value" text.
+ * Returns null when there is nothing to complete (pi then shows no popup).
+ * Pure — exported for testability.
+ */
+export declare function gaugeCompletions(prefix: string): AutocompleteItem[] | null;
 type GaugeRowId = "throughput" | "latency" | "mode" | "display" | "icons";
 /** Current display value of a dialog row for the given settings. */
 export declare function rowValue(settings: GaugeSettings, id: GaugeRowId): string;

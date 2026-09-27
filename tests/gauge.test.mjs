@@ -23,6 +23,7 @@ import {
   barFor,
   renderGraph,
   summarizeSamples,
+  gaugeCompletions,
 } from "../dist/index.js";
 
 function textMsg(text, usage) {
@@ -545,4 +546,45 @@ test("summarizeSamples groups per model with counts", () => {
   assert.ok(out.includes("a: n=2"));
   assert.ok(out.includes("b: n=1"));
   assert.ok(out.includes("100 t/s")); // model a avg
+});
+
+test("gaugeCompletions empty prefix offers all subcommands", () => {
+  const items = gaugeCompletions("");
+  assert.ok(items);
+  const names = items.map((i) => i.value).sort();
+  assert.deepEqual(names, ["display", "graph", "icons", "latency", "mode", "throughput", "tps", "ttft"]);
+  for (const i of items) {
+    assert.equal(i.label, i.value);
+    assert.ok(typeof i.description === "string" && i.description.length > 0);
+  }
+});
+
+test("gaugeCompletions filters first token case-insensitively", () => {
+  const names = gaugeCompletions("t").map((i) => i.value).sort();
+  assert.deepEqual(names, ["throughput", "tps", "ttft"]);
+  assert.deepEqual(gaugeCompletions("MODE").map((i) => i.value), ["mode"]);
+  assert.equal(gaugeCompletions("zzz"), null);
+});
+
+test("gaugeCompletions second position offers values with full-text value", () => {
+  const all = gaugeCompletions("mode ");
+  assert.deepEqual(all.map((i) => i.value).sort(), ["mode e2e", "mode stream"]);
+  assert.deepEqual(all.map((i) => i.label).sort(), ["e2e", "stream"]);
+  // partial second token narrows
+  assert.deepEqual(gaugeCompletions("mode e").map((i) => i.value), ["mode e2e"]);
+  assert.deepEqual(gaugeCompletions("tps o").map((i) => i.label).sort(), ["off", "on"]);
+  // legacy aliases share the primary value set but keep their own prefix
+  assert.deepEqual(gaugeCompletions("throughput ").map((i) => i.value).sort(), [
+    "throughput off",
+    "throughput on",
+  ]);
+  assert.equal(gaugeCompletions("tps zzz"), null);
+});
+
+test("gaugeCompletions null past the completed pair or unknown subs", () => {
+  assert.equal(gaugeCompletions("mode e2e "), null);
+  assert.equal(gaugeCompletions("mode e2e extra"), null);
+  assert.equal(gaugeCompletions("zzz "), null);
+  // graph's model filter is dynamic (no ctx) -> no suggestions
+  assert.equal(gaugeCompletions("graph "), null);
 });
